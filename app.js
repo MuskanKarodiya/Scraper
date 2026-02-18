@@ -367,12 +367,14 @@ const Parser = {
             if (publishedTs < cutoff) continue;
 
             const id = this.hashUrl(link);
+            // Normalize Reddit sub-keys to 'reddit' for consistent filtering/stats
+            const sourceKey = source.key.startsWith('reddit') ? 'reddit' : source.key;
             articles.push({
                 id,
                 title,
                 summary: this.truncate(desc, 280),
                 url: link,
-                source: source.key,
+                source: sourceKey,
                 source_label: source.label,
                 published_at: publishedAt,
                 author,
@@ -589,7 +591,7 @@ const UI = {
     updateStats(articles) {
         const bens = articles.filter(a => a.source === 'bens_bites').length;
         const rundown = articles.filter(a => a.source === 'rundown_ai').length;
-        const reddit = articles.filter(a => a.source === 'reddit').length;
+        const reddit = articles.filter(a => a.source === 'reddit' || a.source === 'reddit_artificial' || a.source === 'reddit_ml').length;
         const saved = state.savedIds.size;
 
         document.querySelector('#stat-total .stat-value').textContent = articles.length;
@@ -735,7 +737,7 @@ function getFilteredArticles() {
         articles = articles.filter(a => a.saved);
     } else if (state.currentFilter !== 'all') {
         articles = articles.filter(a => {
-            if (state.currentFilter === 'reddit') return a.source === 'reddit';
+            if (state.currentFilter === 'reddit') return a.source === 'reddit' || a.source === 'reddit_artificial' || a.source === 'reddit_ml';
             return a.source === state.currentFilter;
         });
     }
