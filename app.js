@@ -22,6 +22,9 @@ const IS_DEPLOYED = location.hostname !== 'localhost' && location.hostname !== '
 const OWN_RSS_API = (url) => `/api/rss?url=${encodeURIComponent(url)}`;
 const OWN_REDDIT_API = (url) => `/api/reddit?url=${encodeURIComponent(url)}`;
 
+// Modal pre-scraped articles endpoint (runs every 24h)
+const MODAL_ENDPOINT = 'https://muskankarodiya06o--ainewz-scraper-get-articles.modal.run';
+
 // External CORS proxies — fallback for localhost or if own API fails
 const CORS_PROXIES = [
     (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -477,6 +480,26 @@ const Parser = {
 async function fetchAllSources() {
     UI.setStatus('loading', 'Fetching feeds…');
 
+    // ── Strategy 0: Try Modal pre-scraped endpoint (fastest, runs every 24h) ──
+    try {
+        console.log('[Modal] Trying pre-scraped endpoint...');
+        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+            const payload = await res.json();
+            if (payload?.articles?.length > 0) {
+                console.log(`[Modal] ✅ Got ${payload.articles.length} pre-scraped articles`);
+                // Ensure saved flags are applied
+                const withSaved = payload.articles.map(a => ({ ...a, saved: state.savedIds.has(a.id) }));
+                Storage.setArticles(withSaved);
+                Storage.setLastFetch(Date.now());
+                return { articles: withSaved, errors: payload.errors || [] };
+            }
+        }
+    } catch (e) {
+        console.warn('[Modal] Endpoint failed, falling back to live fetch:', e.message);
+    }
+
+    // ── Strategy 1: Live fetch from RSS/Reddit via Vercel API functions ──
     const results = { bens_bites: [], rundown_ai: [], reddit: [] };
     const errors = [];
 
