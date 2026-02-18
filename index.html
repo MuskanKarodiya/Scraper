@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AINewz — AI News Dashboard</title>
+  <meta name="description"
+    content="Your daily AI intelligence feed — AINewz. Latest articles from Ben's Bites, The Rundown AI, and Reddit, curated every 24 hours." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════════════════
+       SIDEBAR
+  ═══════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar">
+    <!-- Logo -->
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M20 15 C20 15 20 8 28 8 L72 8 C80 8 80 15 80 15 L80 45 C80 45 80 52 72 52 L52 52 L52 62 C52 62 52 68 46 68 L28 68 C28 68 20 68 20 62 Z"
+            fill="#BFF549" />
+          <rect x="44" y="44" width="16" height="16" rx="4" fill="#BFF549" />
+          <path d="M20 62 L20 85 C20 85 20 92 28 92 L46 92 C46 92 52 92 52 85 L52 68" stroke="#BFF549" stroke-width="0"
+            fill="none" />
+          <rect x="20" y="62" width="32" height="30" rx="8" fill="#BFF549" opacity="0.3" />
+        </svg>
+      </div>
+      <span class="logo-text">AINewz</span>
+    </div>
+
+    <!-- Nav -->
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">FEEDS</div>
+      <a href="#" class="nav-item active" data-filter="all" id="nav-all">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" />
+          <rect x="14" y="3" width="7" height="7" />
+          <rect x="14" y="14" width="7" height="7" />
+          <rect x="3" y="14" width="7" height="7" />
+        </svg>
+        All Sources
+        <span class="nav-badge" id="badge-all">—</span>
+      </a>
+      <a href="#" class="nav-item" data-filter="bens_bites" id="nav-bens">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+          <polyline points="22,6 12,13 2,6" />
+        </svg>
+        Ben's Bites
+        <span class="nav-badge" id="badge-bens">—</span>
+      </a>
+      <a href="#" class="nav-item" data-filter="rundown_ai" id="nav-rundown">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        The Rundown AI
+        <span class="nav-badge" id="badge-rundown">—</span>
+      </a>
+      <a href="#" class="nav-item" data-filter="reddit" id="nav-reddit">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M14.5 9a2.5 2.5 0 0 0-5 0" />
+          <circle cx="9" cy="13" r="1" />
+          <circle cx="15" cy="13" r="1" />
+          <path d="M9.5 17a5 5 0 0 0 5 0" />
+        </svg>
+        Reddit
+        <span class="nav-badge" id="badge-reddit">—</span>
+      </a>
+
+      <div class="nav-section-label" style="margin-top:24px">LIBRARY</div>
+      <a href="#" class="nav-item" data-filter="saved" id="nav-saved">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+        </svg>
+        Saved Articles
+        <span class="nav-badge accent" id="badge-saved">0</span>
+      </a>
+    </nav>
+
+    <!-- Status -->
+    <div class="sidebar-status">
+      <div class="status-row">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-label" id="status-label">Initializing…</span>
+      </div>
+      <div class="status-time" id="status-time"></div>
+      <button class="refresh-btn" id="refresh-btn" title="Force refresh all feeds">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════════
+       MAIN CONTENT
+  ═══════════════════════════════════════════ -->
+  <main class="main">
+
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <div class="topbar-title">
+          <h1 id="page-title">All Sources</h1>
+          <p class="topbar-subtitle">AI intelligence, curated every 24 hours</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input type="text" class="search-input" id="search-input" placeholder="Search articles…" />
+        </div>
+        <div class="sort-wrap">
+          <select class="sort-select" id="sort-select">
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="score">Top Score</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-card" id="stat-total">
+        <div class="stat-value">—</div>
+        <div class="stat-label">Articles Today</div>
+      </div>
+      <div class="stat-card" id="stat-bens">
+        <div class="stat-value source-bens">—</div>
+        <div class="stat-label">Ben's Bites</div>
+      </div>
+      <div class="stat-card" id="stat-rundown">
+        <div class="stat-value source-rundown">—</div>
+        <div class="stat-label">Rundown AI</div>
+      </div>
+      <div class="stat-card" id="stat-reddit">
+        <div class="stat-value source-reddit">—</div>
+        <div class="stat-label">Reddit</div>
+      </div>
+      <div class="stat-card" id="stat-saved">
+        <div class="stat-value source-saved">0</div>
+        <div class="stat-label">Saved</div>
+      </div>
+    </div>
+
+    <!-- Error Banner -->
+    <div class="error-banner hidden" id="error-banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <span id="error-text">Some sources failed to load. Showing available data.</span>
+    </div>
+
+    <!-- Article Grid -->
+    <section class="articles-section">
+      <div class="articles-grid" id="articles-grid">
+        <!-- Skeleton loaders -->
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+        <div class="skeleton-card">
+          <div class="sk-badge"></div>
+          <div class="sk-title"></div>
+          <div class="sk-title short"></div>
+          <div class="sk-body"></div>
+          <div class="sk-body short"></div>
+          <div class="sk-footer"></div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state hidden" id="empty-state">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+            <rect x="9" y="3" width="6" height="4" rx="1" />
+          </svg>
+        </div>
+        <h3 id="empty-title">No articles found</h3>
+        <p id="empty-subtitle">Try a different filter or refresh the feed.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════════
+       ARTICLE DETAIL MODAL
+  ═══════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <span class="modal-badge" id="modal-badge"></span>
+        <button class="modal-close" id="modal-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <h2 class="modal-title" id="modal-title"></h2>
+      <div class="modal-meta" id="modal-meta"></div>
+      <p class="modal-summary" id="modal-summary"></p>
+      <div class="modal-actions">
+        <a class="btn-primary" id="modal-link" href="#" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          Read Full Article
+        </a>
+        <button class="btn-secondary" id="modal-save-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+          </svg>
+          Save Article
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
