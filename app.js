@@ -224,21 +224,36 @@ const Fetcher = {
         return null;
     },
 
-    // Reddit — tries own /api/reddit first (deployed), then direct, then CORS proxies
+    // Reddit — tries own /api/reddit (returns RSS XML) first, then JSON API via proxies
     async fetchReddit(source) {
         const redditUrl = source.urls[0];
 
-        // Strategy 0: Own Vercel serverless API (deployed only)
+        // Strategy 0: Own Vercel serverless API (deployed only) — returns RSS XML
         if (IS_DEPLOYED) {
             try {
                 const apiUrl = OWN_REDDIT_API(redditUrl);
-                console.log('[own-api/reddit] Trying:', redditUrl);
+                console.log('[own-api/reddit] Trying RSS via:', redditUrl);
                 const res = await this._fetch(apiUrl);
                 if (res.ok) {
-                    const data = await res.json();
-                    if (data?.data?.children) {
-                        console.log('[own-api/reddit] OK, posts:', data.data.children.length);
-                        return data;
+                    const contentType = res.headers.get('content-type') || '';
+                    if (contentType.includes('xml')) {
+                        // RSS response
+                        const xmlText = await res.text();
+                        if (xmlText && xmlText.length > 100) {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(xmlText, 'text/xml');
+                            if (!doc.querySelector('parsererror')) {
+                                console.log('[own-api/reddit] RSS OK, items:', doc.querySelectorAll('item, entry').length);
+                                return { type: 'rss_xml', doc };
+                            }
+                        }
+                    } else {
+                        // JSON fallback response
+                        const data = await res.json();
+                        if (data?.data?.children) {
+                            console.log('[own-api/reddit] JSON OK, posts:', data.data.children.length);
+                            return { type: 'reddit_json', data };
+                        }
                     }
                 }
             } catch (e) {
@@ -246,14 +261,14 @@ const Fetcher = {
             }
         }
 
-        // Strategy 1: Direct (works in some browsers on localhost)
+        // Strategy 1: Direct JSON API (works in some browsers on localhost)
         try {
             console.log('[Reddit] Trying direct:', redditUrl);
             const res = await this._fetch(redditUrl, {}, 8000);
             if (res.ok) {
                 const data = await res.json();
                 console.log('[Reddit] Direct OK, posts:', data?.data?.children?.length);
-                return data;
+                return { type: 'reddit_json', data };
             }
         } catch (e) {
             console.warn('[Reddit] Direct failed:', e.message);
@@ -274,7 +289,7 @@ const Fetcher = {
                 } catch { /* raw JSON */ }
                 const data = JSON.parse(jsonText);
                 console.log('[Reddit] Proxy OK, posts:', data?.data?.children?.length);
-                return data;
+                return { type: 'reddit_json', data };
             } catch (e) {
                 console.warn('[Reddit] Proxy failed:', e.message);
             }
@@ -282,6 +297,7 @@ const Fetcher = {
         console.error('[Reddit] All strategies failed for', source.key);
         return null;
     },
+
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -492,16 +508,31 @@ async function fetchAllSources() {
 
     // Parse Reddit
     const redditArticles = [];
+
+    function parseRedditResult(result, source) {
+        if (!result) return [];
+        if (result.type === 'rss_xml') {
+            // Reddit RSS feed — parse as standard RSS items
+            return Parser.parseRSSItems(result.doc, source);
+        } else if (result.type === 'reddit_json') {
+            // Reddit JSON API
+            return Parser.parseRedditPosts(result.data, source);
+        }
+        // Legacy: raw JSON data (old format)
+        return Parser.parseRedditPosts(result, source);
+    }
+
     if (redditArtResult.status === 'fulfilled' && redditArtResult.value) {
-        redditArticles.push(...Parser.parseRedditPosts(redditArtResult.value, SOURCES.reddit_artificial));
+        redditArticles.push(...parseRedditResult(redditArtResult.value, SOURCES.reddit_artificial));
     } else {
         errors.push('Reddit r/artificial');
     }
     if (redditMLResult.status === 'fulfilled' && redditMLResult.value) {
-        redditArticles.push(...Parser.parseRedditPosts(redditMLResult.value, SOURCES.reddit_ml));
+        redditArticles.push(...parseRedditResult(redditMLResult.value, SOURCES.reddit_ml));
     } else {
         errors.push('Reddit r/MachineLearning');
     }
+
     results.reddit = redditArticles;
 
     // Merge + deduplicate

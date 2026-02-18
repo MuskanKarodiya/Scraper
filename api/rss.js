@@ -1,80 +1,84 @@
 /**
  * Vercel Serverless Function: /api/rss
  * Fetches an RSS feed URL server-side and returns the raw XML.
- * No CORS issues — runs on Vercel's Node.js runtime.
+ * Follows redirects (up to 5 hops).
  *
  * Usage: GET /api/rss?url=https://bensbites.beehiiv.com/feed
  */
 
+const https = require('https');
+const http = require('http');
+
+function fetchWithRedirects(urlStr, redirectsLeft = 5) {
+    return new Promise((resolve, reject) => {
+        if (redirectsLeft === 0) return reject(new Error('Too many redirects'));
+
+        let parsed;
+        try { parsed = new URL(urlStr); } catch (e) { return reject(e); }
+
+        const client = parsed.protocol === 'https:' ? https : http;
+        const options = {
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+            path: parsed.pathname + parsed.search,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; AINewz-Bot/1.0; +https://ainewz.ai)',
+                'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+                'Accept-Encoding': 'identity',
+            },
+            timeout: 12000,
+        };
+
+        const req = client.get(options, (res) => {
+            // Follow redirects
+            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+                const next = res.headers.location.startsWith('http')
+                    ? res.headers.location
+                    : `${parsed.protocol}//${parsed.hostname}${res.headers.location}`;
+                res.resume(); // discard body
+                return resolve(fetchWithRedirects(next, redirectsLeft - 1));
+            }
+
+            if (res.statusCode >= 400) {
+                return reject(new Error(`HTTP ${res.statusCode}`));
+            }
+
+            let data = '';
+            res.setEncoding('utf8');
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve(data));
+        });
+
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+    });
+}
+
 module.exports = async function handler(req, res) {
-    // CORS headers so the browser can call this endpoint
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { url } = req.query;
+    if (!url) return res.status(400).json({ error: 'Missing ?url= parameter' });
 
-    if (!url) {
-        return res.status(400).json({ error: 'Missing ?url= parameter' });
-    }
-
-    // Basic URL validation — only allow http/https
     let feedUrl;
     try {
         feedUrl = new URL(url);
-        if (!['http:', 'https:'].includes(feedUrl.protocol)) {
-            throw new Error('Invalid protocol');
-        }
+        if (!['http:', 'https:'].includes(feedUrl.protocol)) throw new Error('Invalid protocol');
     } catch {
         return res.status(400).json({ error: 'Invalid URL' });
     }
 
     try {
-        const https = require('https');
-        const http = require('http');
-        const client = feedUrl.protocol === 'https:' ? https : http;
-
-        const xml = await new Promise((resolve, reject) => {
-            const options = {
-                hostname: feedUrl.hostname,
-                path: feedUrl.pathname + feedUrl.search,
-                headers: {
-                    'User-Agent': 'AINewz-Dashboard/1.0 (RSS Reader)',
-                    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-                },
-                timeout: 10000,
-            };
-
-            const req2 = client.get(options, (response) => {
-                if (response.statusCode >= 400) {
-                    reject(new Error(`Upstream returned ${response.statusCode}`));
-                    return;
-                }
-                // Handle redirects
-                if (response.statusCode >= 300 && response.headers.location) {
-                    reject(new Error(`Redirect to ${response.headers.location}`));
-                    return;
-                }
-                let data = '';
-                response.on('data', chunk => data += chunk);
-                response.on('end', () => resolve(data));
-            });
-
-            req2.on('error', reject);
-            req2.on('timeout', () => { req2.destroy(); reject(new Error('Timeout')); });
-        });
-
-        // Cache for 15 minutes on Vercel edge
+        const xml = await fetchWithRedirects(feedUrl.toString());
         res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
         return res.status(200).send(xml);
-
     } catch (err) {
-        console.error('[api/rss] Error fetching', feedUrl.toString(), err.message);
+        console.error('[api/rss] Error:', feedUrl.toString(), err.message);
         return res.status(500).json({ error: err.message });
     }
 };
