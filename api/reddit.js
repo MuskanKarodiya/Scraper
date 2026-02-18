@@ -6,7 +6,7 @@
  * Usage: GET /api/reddit?url=https://www.reddit.com/r/artificial/new.json?limit=50
  */
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -35,21 +35,35 @@ export default async function handler(req, res) {
     }
 
     try {
-        const response = await fetch(redditUrl.toString(), {
-            headers: {
-                'User-Agent': 'AINewz-Dashboard/1.0 (by /u/ainewz_bot)',
-                'Accept': 'application/json',
-            },
-            signal: AbortSignal.timeout(10000),
-        });
+        const https = require('https');
 
-        if (!response.ok) {
-            return res.status(response.status).json({
-                error: `Reddit returned ${response.status}`,
+        const data = await new Promise((resolve, reject) => {
+            const options = {
+                hostname: redditUrl.hostname,
+                path: redditUrl.pathname + redditUrl.search,
+                headers: {
+                    'User-Agent': 'AINewz-Dashboard/1.0 (by /u/ainewz_bot)',
+                    'Accept': 'application/json',
+                },
+                timeout: 10000,
+            };
+
+            const req2 = https.get(options, (response) => {
+                if (response.statusCode >= 400) {
+                    reject(new Error(`Reddit returned ${response.statusCode}`));
+                    return;
+                }
+                let raw = '';
+                response.on('data', chunk => raw += chunk);
+                response.on('end', () => {
+                    try { resolve(JSON.parse(raw)); }
+                    catch (e) { reject(new Error('Invalid JSON from Reddit')); }
+                });
             });
-        }
 
-        const data = await response.json();
+            req2.on('error', reject);
+            req2.on('timeout', () => { req2.destroy(); reject(new Error('Timeout')); });
+        });
 
         // Cache for 5 minutes
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
@@ -60,4 +74,4 @@ export default async function handler(req, res) {
         console.error('[api/reddit] Error fetching', redditUrl.toString(), err.message);
         return res.status(500).json({ error: err.message });
     }
-}
+};

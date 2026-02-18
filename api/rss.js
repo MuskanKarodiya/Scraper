@@ -6,7 +6,7 @@
  * Usage: GET /api/rss?url=https://bensbites.beehiiv.com/feed
  */
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     // CORS headers so the browser can call this endpoint
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -34,21 +34,39 @@ export default async function handler(req, res) {
     }
 
     try {
-        const response = await fetch(feedUrl.toString(), {
-            headers: {
-                'User-Agent': 'AINewz-Dashboard/1.0 (RSS Reader)',
-                'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-            },
-            signal: AbortSignal.timeout(10000),
-        });
+        const https = require('https');
+        const http = require('http');
+        const client = feedUrl.protocol === 'https:' ? https : http;
 
-        if (!response.ok) {
-            return res.status(response.status).json({
-                error: `Upstream returned ${response.status}`,
+        const xml = await new Promise((resolve, reject) => {
+            const options = {
+                hostname: feedUrl.hostname,
+                path: feedUrl.pathname + feedUrl.search,
+                headers: {
+                    'User-Agent': 'AINewz-Dashboard/1.0 (RSS Reader)',
+                    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+                },
+                timeout: 10000,
+            };
+
+            const req2 = client.get(options, (response) => {
+                if (response.statusCode >= 400) {
+                    reject(new Error(`Upstream returned ${response.statusCode}`));
+                    return;
+                }
+                // Handle redirects
+                if (response.statusCode >= 300 && response.headers.location) {
+                    reject(new Error(`Redirect to ${response.headers.location}`));
+                    return;
+                }
+                let data = '';
+                response.on('data', chunk => data += chunk);
+                response.on('end', () => resolve(data));
             });
-        }
 
-        const xml = await response.text();
+            req2.on('error', reject);
+            req2.on('timeout', () => { req2.destroy(); reject(new Error('Timeout')); });
+        });
 
         // Cache for 15 minutes on Vercel edge
         res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=1800');
@@ -59,4 +77,4 @@ export default async function handler(req, res) {
         console.error('[api/rss] Error fetching', feedUrl.toString(), err.message);
         return res.status(500).json({ error: err.message });
     }
-}
+};
