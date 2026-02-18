@@ -16,14 +16,20 @@ const STORAGE_KEYS = {
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24h cache freshness
 const ARTICLE_WINDOW = 72 * 60 * 60 * 1000; // show articles from last 72h
 
-// CORS proxies tried in order until one works
+// Our own Vercel serverless API — primary strategy (no CORS, server-side)
+// Falls back to external proxies when running on localhost dev
+const IS_DEPLOYED = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+const OWN_RSS_API = (url) => `/api/rss?url=${encodeURIComponent(url)}`;
+const OWN_REDDIT_API = (url) => `/api/reddit?url=${encodeURIComponent(url)}`;
+
+// External CORS proxies — fallback for localhost or if own API fails
 const CORS_PROXIES = [
     (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
 ];
 
-// rss2json API — parses RSS server-side, returns clean JSON (no XML needed)
+// rss2json API — fallback RSS parser
 const RSS2JSON = (url) =>
     `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}&count=50&order_by=pubDate&order_dir=desc`;
 
@@ -181,14 +187,36 @@ const Fetcher = {
         return null;
     },
 
-    // Main RSS fetcher — tries rss2json first, then proxy
+    // Main RSS fetcher — tries own /api/rss first (deployed), then rss2json, then proxy
     async fetchRSS(source) {
         for (const feedUrl of source.urls) {
-            // Try rss2json first (most reliable)
+            // Strategy 0: Own Vercel serverless API (deployed only)
+            if (IS_DEPLOYED) {
+                try {
+                    const apiUrl = OWN_RSS_API(feedUrl);
+                    console.log('[own-api/rss] Trying:', feedUrl);
+                    const res = await this._fetch(apiUrl);
+                    if (res.ok) {
+                        const xmlText = await res.text();
+                        if (xmlText && xmlText.length > 100) {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(xmlText, 'text/xml');
+                            if (!doc.querySelector('parsererror')) {
+                                console.log('[own-api/rss] OK, items:', doc.querySelectorAll('item, entry').length);
+                                return { method: 'proxy', result: { type: 'xml', doc }, feedUrl };
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[own-api/rss] Failed:', e.message);
+                }
+            }
+
+            // Strategy 1: rss2json (works on localhost + deployed)
             const r2j = await this.fetchViaRss2Json(feedUrl);
             if (r2j) return { method: 'rss2json', result: r2j, feedUrl };
 
-            // Fall back to proxy + XML
+            // Strategy 2: External CORS proxy + XML
             const proxy = await this.fetchViaProxy(feedUrl);
             if (proxy) return { method: 'proxy', result: proxy, feedUrl };
         }
@@ -196,10 +224,29 @@ const Fetcher = {
         return null;
     },
 
-    // Reddit — route through proxy to avoid CORS + User-Agent issues
+    // Reddit — tries own /api/reddit first (deployed), then direct, then CORS proxies
     async fetchReddit(source) {
         const redditUrl = source.urls[0];
-        // Try direct first (works in some browsers)
+
+        // Strategy 0: Own Vercel serverless API (deployed only)
+        if (IS_DEPLOYED) {
+            try {
+                const apiUrl = OWN_REDDIT_API(redditUrl);
+                console.log('[own-api/reddit] Trying:', redditUrl);
+                const res = await this._fetch(apiUrl);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data?.data?.children) {
+                        console.log('[own-api/reddit] OK, posts:', data.data.children.length);
+                        return data;
+                    }
+                }
+            } catch (e) {
+                console.warn('[own-api/reddit] Failed:', e.message);
+            }
+        }
+
+        // Strategy 1: Direct (works in some browsers on localhost)
         try {
             console.log('[Reddit] Trying direct:', redditUrl);
             const res = await this._fetch(redditUrl, {}, 8000);
@@ -212,7 +259,7 @@ const Fetcher = {
             console.warn('[Reddit] Direct failed:', e.message);
         }
 
-        // Fall back to proxy
+        // Strategy 2: External CORS proxy
         for (const makeProxy of CORS_PROXIES) {
             try {
                 const proxyUrl = makeProxy(redditUrl);
