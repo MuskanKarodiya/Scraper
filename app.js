@@ -483,7 +483,7 @@ async function fetchAllSources() {
     // ── Strategy 0: Try Modal pre-scraped endpoint (fastest, runs every 24h) ──
     try {
         console.log('[Modal] Trying pre-scraped endpoint...');
-        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(20000) }); // 20s — Modal cold starts can take 10-15s
+        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(60000) }); // 60s — covers Modal cold starts (10-30s) + CDN miss
         if (res.ok) {
             const payload = await res.json();
             if (payload?.articles?.length > 0) {
@@ -1072,50 +1072,53 @@ function initEventListeners() {
    MAIN INIT
 ═══════════════════════════════════════════════════════════ */
 async function loadData(forceRefresh = false) {
-    UI.setStatus('loading', 'Fetching feeds…');
-
-    let articles = [];
-    let errors = [];
-
-    if (!forceRefresh && Storage.isCacheValid()) {
-        // Load from cache
-        articles = Storage.getArticles();
-        UI.setStatus('live', 'Live');
-        showToast('Loaded from cache', 'default');
-    } else {
-        // Fetch fresh
-        try {
-            const result = await fetchAllSources();
-            articles = result.articles;
-            errors = result.errors;
-
-            if (errors.length > 0) {
-                UI.setStatus('error', 'Partial data');
-                UI.showError(errors);
-            } else {
-                UI.setStatus('live', 'Live');
-            }
-
-            if (articles.length > 0) {
-                showToast(`✅ ${articles.length} articles loaded`, 'success');
-            } else {
-                showToast('No new articles in the last 24h', 'default');
-            }
-        } catch (err) {
-            console.error('Fatal fetch error:', err);
-            UI.setStatus('error', 'Fetch failed');
-            // Try to fall back to cache
-            articles = Storage.getArticles();
-            if (articles.length > 0) {
-                showToast('Using cached data', 'default');
-            } else {
-                showToast('Failed to load articles', 'error');
-            }
-        }
+    // Step 1: Always render whatever is in cache immediately — page is never blank
+    const cached = Storage.getArticles();
+    if (cached.length > 0) {
+        state.allArticles = cached.map(a => ({ ...a, saved: state.savedIds.has(a.id) }));
+        rerender();
     }
 
-    state.allArticles = articles;
-    rerender();
+    // Step 2: If cache is still fresh and not forcing a refresh, we're done
+    if (!forceRefresh && Storage.isCacheValid() && cached.length > 0) {
+        UI.setStatus('live', 'Live');
+        showToast('Loaded from cache', 'default');
+        return;
+    }
+
+    // Step 3: Cache is stale or user hit Refresh — fetch fresh data.
+    // The user sees cached articles above while this loads (no blank screen).
+    UI.setStatus('loading', 'Fetching feeds…');
+    try {
+        const result = await fetchAllSources(); // Modal has 60s timeout; live fetch is the fallback
+        const articles = result.articles;
+        const errors = result.errors;
+
+        if (errors.length > 0) {
+            UI.setStatus('error', 'Partial data');
+            UI.showError(errors);
+        } else {
+            UI.setStatus('live', 'Live');
+        }
+
+        if (articles.length > 0) {
+            showToast(`✅ ${articles.length} articles loaded`, 'success');
+        } else {
+            showToast('No new articles in the last 72h', 'default');
+        }
+
+        state.allArticles = articles;
+        rerender();
+    } catch (err) {
+        console.error('Fatal fetch error:', err);
+        UI.setStatus('error', 'Fetch failed');
+        // Keep showing whatever was already rendered (cached or nothing)
+        if (state.allArticles.length === 0) {
+            showToast('Failed to load articles', 'error');
+        } else {
+            showToast('Using cached data', 'default');
+        }
+    }
 }
 
 async function init() {
