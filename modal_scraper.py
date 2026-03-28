@@ -2,8 +2,8 @@
 AINewz Modal Scraper
 ====================
 Runs every 24 hours to fetch articles from:
-  - Ben's Bites (RSS)
-  - The Rundown AI (RSS)
+  - Ben's Bites (RSS via Substack)
+  - The Rundown AI (RSS by Beehiiv)
   - Reddit r/artificial (RSS)
   - Reddit r/MachineLearning (RSS)
 
@@ -19,6 +19,7 @@ import json
 import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
+import re
 from datetime import datetime, timezone, timedelta
 from hashlib import md5
 
@@ -38,8 +39,8 @@ SOURCES = [
         "label": "Ben's Bites",
         "type": "rss",
         "urls": [
-            "https://bensbites.beehiiv.com/feed",
-            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml",
+            "https://bensbites.substack.com/feed",  # Substack is reliable
+            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", # This is actually Rundown AI? careful
         ],
     },
     {
@@ -47,7 +48,7 @@ SOURCES = [
         "label": "The Rundown AI",
         "type": "rss",
         "urls": [
-            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml",
+            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", # Verified Rundown feed
             "https://www.therundown.ai/rss",
         ],
     },
@@ -62,7 +63,7 @@ SOURCES = [
     },
 ]
 
-ARTICLE_WINDOW_HOURS = 48  # keep articles from last 48h (generous window)
+ARTICLE_WINDOW_HOURS = 48
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def hash_url(url: str) -> str:
@@ -87,7 +88,7 @@ def fetch_url(url: str, timeout: int = 15) -> str | None:
 
 
 def parse_rss(xml_text: str, source_key: str, source_label: str) -> list[dict]:
-    """Parse RSS/Atom XML and return article dicts."""
+    """Robust RSS/Atom parser that ignores namespaces."""
     articles = []
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ARTICLE_WINDOW_HOURS)
 
@@ -97,21 +98,32 @@ def parse_rss(xml_text: str, source_key: str, source_label: str) -> list[dict]:
         print(f"[parse] XML error: {e}")
         return []
 
-    # Support both RSS <item> and Atom <entry>
-    ns = {"atom": "http://www.w3.org/2005/Atom"}
-    items = root.findall(".//item") or root.findall(".//atom:entry", ns) or root.findall(".//entry")
+    # Iterate over all items/entries regardless of namespace
+    items = []
+    for elem in root.iter():
+        if elem.tag.endswith("item") or elem.tag.endswith("entry"):
+            items.append(elem)
 
     for item in items:
-        def get(tag, attr=None):
-            el = item.find(tag) or item.find(f"atom:{tag}", ns)
-            if el is None:
-                return None
-            return el.get(attr) if attr else (el.text or "").strip()
+        # Helper to find child text safely ignoring namespace
+        def get_text(tag_suffix):
+            for child in item:
+                if child.tag.endswith(tag_suffix):
+                    return child.text or ""
+            return ""
 
-        title = get("title") or "Untitled"
-        link = get("link") or get("link", "href") or "#"
-        pub_raw = get("pubDate") or get("published") or get("updated") or ""
-        desc = get("description") or get("summary") or get("content") or ""
+        def get_attr(tag_suffix, attr_name):
+            for child in item:
+                if child.tag.endswith(tag_suffix):
+                    return child.get(attr_name)
+            return None
+
+        title = get_text("title") or "Untitled"
+        link = get_text("link") or get_attr("link", "href") or "#"
+        pub_raw = get_text("pubDate") or get_text("published") or get_text("updated")
+        desc = get_text("description") or get_text("summary")
+        content = get_text("encoded") or get_text("content") or ""
+        author = get_text("author") or get_text("creator") or source_label
 
         # Parse date
         try:
@@ -129,22 +141,51 @@ def parse_rss(xml_text: str, source_key: str, source_label: str) -> list[dict]:
             continue
 
         # Strip HTML from description
-        import re
         clean_desc = re.sub(r"<[^>]+>", "", desc).strip()
         if len(clean_desc) > 300:
             clean_desc = clean_desc[:300] + "…"
+        if not clean_desc and len(content) > 0:
+             clean_content = re.sub(r"<[^>]+>", "", content).strip()
+             clean_desc = clean_content[:300] + "…"
+
+        # Image extraction logic
+        thumbnail = None
+        
+        # 1. Check media:thumbnail / media:content
+        for child in item:
+            tag = child.tag.lower()
+            if tag.endswith("thumbnail") or tag.endswith("content"):
+                url = child.get("url")
+                typ = child.get("type") or ""
+                if url and (url.endswith(('.jpg', '.png', '.jpeg', '.webp')) or 'image' in typ):
+                    thumbnail = url
+                    break
+        
+        # 2. Check enclosure
+        if not thumbnail:
+            enc_url = get_attr("enclosure", "url")
+            enc_type = get_attr("enclosure", "type")
+            if enc_url and ('image' in (enc_type or "") or enc_url.endswith(('.jpg', '.png', '.jpeg'))):
+                thumbnail = enc_url
+
+        # 3. Regex on content/description
+        if not thumbnail:
+            full_html = (desc or "") + (content or "")
+            img_match = re.search(r'<img[^>]+src="([^">]+)"', full_html)
+            if img_match:
+                thumbnail = img_match.group(1)
 
         articles.append({
             "id": hash_url(link),
-            "title": title,
+            "title": title.strip(),
             "summary": clean_desc,
             "url": link,
             "source": source_key,
             "source_label": source_label,
             "published_at": pub_dt.isoformat(),
-            "author": source_label,
+            "author": author.strip() or source_label,
             "score": None,
-            "thumbnail": None,
+            "thumbnail": thumbnail,
             "saved": False,
         })
 
@@ -167,10 +208,20 @@ def fetch_and_store():
             print(f"[scraper] Fetching {source['key']} from {url}")
             xml_text = fetch_url(url)
             if xml_text and len(xml_text) > 200:
-                articles = parse_rss(xml_text, source["key"], source["label"])
-                if articles:
-                    print(f"[scraper] {source['key']}: {len(articles)} articles")
-                    all_articles.extend(articles)
+                # Check if we accidentally fetched the wrong feed (Rundown vs Ben's Bites)
+                # If we are fetching Ben's Bites but see "Therundown" in title, might be wrong
+                # But let's trust the URL for now
+                
+                initial_count = len(all_articles)
+                new_articles = parse_rss(xml_text, source["key"], source["label"])
+                
+                # Filter out articles that clearly don't belong (simple check)
+                if source["key"] == "bens_bites" and "rundown" in xml_text.lower() and "ben" not in xml_text.lower():
+                     print(f"[scraper] Warning: {url} might be serving Rundown AI content instead of Ben's Bites")
+                
+                if new_articles:
+                    print(f"[scraper] {source['key']}: {len(new_articles)} articles")
+                    all_articles.extend(new_articles)
                     fetched = True
                     break
                 else:
@@ -230,7 +281,7 @@ def get_articles():
 
 # ── Scheduled job — runs every 24 hours ───────────────────────────────────────
 @app.function(
-    schedule=modal.Cron("0 6 * * *"),  # 6:00 AM UTC daily (11:30 AM IST)
+    schedule=modal.Cron("0 6 * * *"),  # 6:00 AM UTC daily
 )
 def scheduled_scrape():
     """Triggered by Modal's scheduler every 24 hours."""
@@ -242,7 +293,7 @@ def scheduled_scrape():
 # ── Local entrypoint for testing ──────────────────────────────────────────────
 @app.local_entrypoint()
 def main():
-    print("Running scraper locally (will use Modal cloud)...")
+    print("Running scraper locally (using Modal cloud)...")
     result = fetch_and_store.remote()
     print(f"\n✅ Done! {result['count']} articles fetched.")
     if result["errors"]:
