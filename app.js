@@ -483,7 +483,7 @@ async function fetchAllSources() {
     // ── Strategy 0: Try Modal pre-scraped endpoint (fastest, runs every 24h) ──
     try {
         console.log('[Modal] Trying pre-scraped endpoint...');
-        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(20000) }); // 20s — Modal cold starts can take 10-15s
         if (res.ok) {
             const payload = await res.json();
             if (payload?.articles?.length > 0) {
