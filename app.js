@@ -22,8 +22,11 @@ const IS_DEPLOYED = location.hostname !== 'localhost' && location.hostname !== '
 const OWN_RSS_API = (url) => `/api/rss?url=${encodeURIComponent(url)}`;
 const OWN_REDDIT_API = (url) => `/api/reddit?url=${encodeURIComponent(url)}`;
 
-// Modal pre-scraped articles endpoint (runs every 24h)
-const MODAL_ENDPOINT = 'https://muskankarodiya06o--ainewz-scraper-get-articles.modal.run';
+// Modal pre-scraped articles — routed through Vercel proxy to avoid CORS on cold-start errors
+// When deployed: /api/modal (same-origin, no CORS). When local: call Modal directly.
+const MODAL_ENDPOINT = IS_DEPLOYED
+    ? '/api/modal'
+    : 'https://muskankarodiya06o--ainewz-scraper-get-articles.modal.run';
 
 // External CORS proxies — fallback for localhost or if own API fails
 const CORS_PROXIES = [
@@ -483,7 +486,7 @@ async function fetchAllSources() {
     // ── Strategy 0: Try Modal pre-scraped endpoint (fastest, runs every 24h) ──
     try {
         console.log('[Modal] Trying pre-scraped endpoint...');
-        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(60000) }); // 60s — covers Modal cold starts (10-30s) + CDN miss
+        const res = await fetch(MODAL_ENDPOINT, { signal: AbortSignal.timeout(12000) }); // 12s — Vercel proxy does the heavy lifting server-side
         if (res.ok) {
             const payload = await res.json();
             if (payload?.articles?.length > 0) {
