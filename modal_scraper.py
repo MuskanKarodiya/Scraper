@@ -39,8 +39,7 @@ SOURCES = [
         "label": "Ben's Bites",
         "type": "rss",
         "urls": [
-            "https://bensbites.substack.com/feed",  # Substack is reliable
-            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", # This is actually Rundown AI? careful
+            "https://bensbites.substack.com/feed",  # Ben's Bites Substack (do NOT add Rundown AI URLs here)
         ],
     },
     {
@@ -48,35 +47,49 @@ SOURCES = [
         "label": "The Rundown AI",
         "type": "rss",
         "urls": [
-            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", # Verified Rundown feed
+            "https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml",  # Verified Rundown AI Beehiiv feed
             "https://www.therundown.ai/rss",
         ],
     },
     {
         "key": "reddit",
         "label": "Reddit",
-        "type": "reddit_rss",
+        "type": "reddit_multi",  # Tries RSS first, then JSON API
         "urls": [
+            "https://old.reddit.com/r/artificial/new.rss?limit=50",
+            "https://old.reddit.com/r/MachineLearning/new.rss?limit=50",
             "https://www.reddit.com/r/artificial/new.rss?limit=50",
             "https://www.reddit.com/r/MachineLearning/new.rss?limit=50",
+        ],
+        "json_urls": [
+            "https://old.reddit.com/r/artificial/new.json?limit=50",
+            "https://old.reddit.com/r/MachineLearning/new.json?limit=50",
         ],
     },
 ]
 
-ARTICLE_WINDOW_HOURS = 48
+ARTICLE_WINDOW_HOURS = 72  # 72h covers weekend publishing gaps (newsletters skip Sat/Sun)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def hash_url(url: str) -> str:
     return md5(url.encode()).hexdigest()[:12]
 
 
-def fetch_url(url: str, timeout: int = 15) -> str | None:
-    """Fetch a URL with redirect following and a browser-like User-Agent."""
+def fetch_url(url: str, timeout: int = 15, is_reddit: bool = False) -> str | None:
+    """Fetch a URL with redirect following and appropriate User-Agent."""
+    if is_reddit:
+        # Reddit API guidelines require a descriptive user-agent
+        user_agent = "Mozilla/5.0 (compatible; GlaidoDashboard/1.0; +https://scraper-wine-delta.vercel.app)"
+        accept = "application/rss+xml, application/xml, application/json, text/xml, */*"
+    else:
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        accept = "application/rss+xml, application/xml, text/xml, */*"
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; AINewz-Bot/1.0; +https://ainewz.ai)",
-            "Accept": "application/rss+xml, application/xml, text/xml, */*",
+            "User-Agent": user_agent,
+            "Accept": accept,
+            "Accept-Language": "en-US,en;q=0.9",
         },
     )
     try:
@@ -85,6 +98,54 @@ def fetch_url(url: str, timeout: int = 15) -> str | None:
     except Exception as e:
         print(f"[fetch] Failed {url}: {e}")
         return None
+
+
+def parse_reddit_json(json_text: str, source_key: str, source_label: str) -> list[dict]:
+    """Parse Reddit's JSON API response into Article objects."""
+    import json as _json
+    articles = []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARTICLE_WINDOW_HOURS)
+    try:
+        data = _json.loads(json_text)
+        children = data.get("data", {}).get("children", [])
+    except Exception as e:
+        print(f"[parse_reddit_json] Parse error: {e}")
+        return []
+
+    for child in children:
+        post = child.get("data", {})
+        title = post.get("title", "Untitled")
+        url = post.get("url") or post.get("permalink", "#")
+        if url.startswith("/"):
+            url = "https://www.reddit.com" + url
+        score = post.get("score", 0)
+        author = post.get("author", "reddit")
+        subreddit = post.get("subreddit", "")
+        created_utc = post.get("created_utc", 0)
+        pub_dt = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+        if pub_dt < cutoff:
+            continue
+        selftext = post.get("selftext", "") or ""
+        clean_summary = selftext.strip()[:300] + "…" if len(selftext.strip()) > 300 else selftext.strip()
+        if not clean_summary:
+            clean_summary = f"r/{subreddit} — {score} upvotes"
+        thumbnail = post.get("thumbnail", "")
+        if thumbnail in ("self", "default", "nsfw", "spoiler", "", None):
+            thumbnail = None
+        articles.append({
+            "id": hash_url(url),
+            "title": title.strip(),
+            "summary": clean_summary,
+            "url": url,
+            "source": source_key,
+            "source_label": source_label,
+            "published_at": pub_dt.isoformat(),
+            "author": f"u/{author}",
+            "score": score,
+            "thumbnail": thumbnail,
+            "saved": False,
+        })
+    return articles
 
 
 def parse_rss(xml_text: str, source_key: str, source_label: str) -> list[dict]:
@@ -204,23 +265,16 @@ def fetch_and_store():
 
     for source in SOURCES:
         fetched = False
+        is_reddit = source["type"] == "reddit_multi"
+
+        # Try RSS/XML URLs first
         for url in source["urls"]:
             print(f"[scraper] Fetching {source['key']} from {url}")
-            xml_text = fetch_url(url)
+            xml_text = fetch_url(url, is_reddit=is_reddit)
             if xml_text and len(xml_text) > 200:
-                # Check if we accidentally fetched the wrong feed (Rundown vs Ben's Bites)
-                # If we are fetching Ben's Bites but see "Therundown" in title, might be wrong
-                # But let's trust the URL for now
-                
-                initial_count = len(all_articles)
                 new_articles = parse_rss(xml_text, source["key"], source["label"])
-                
-                # Filter out articles that clearly don't belong (simple check)
-                if source["key"] == "bens_bites" and "rundown" in xml_text.lower() and "ben" not in xml_text.lower():
-                     print(f"[scraper] Warning: {url} might be serving Rundown AI content instead of Ben's Bites")
-                
                 if new_articles:
-                    print(f"[scraper] {source['key']}: {len(new_articles)} articles")
+                    print(f"[scraper] {source['key']}: {len(new_articles)} articles from RSS")
                     all_articles.extend(new_articles)
                     fetched = True
                     break
@@ -228,6 +282,22 @@ def fetch_and_store():
                     print(f"[scraper] {source['key']}: parsed 0 articles from {url}")
             else:
                 print(f"[scraper] {source['key']}: empty/failed response from {url}")
+
+        # For Reddit: if RSS failed, try JSON API
+        if not fetched and is_reddit and source.get("json_urls"):
+            print(f"[scraper] Reddit RSS failed — trying JSON API fallback")
+            for json_url in source["json_urls"]:
+                print(f"[scraper] Reddit JSON: {json_url}")
+                json_text = fetch_url(json_url, is_reddit=True)
+                if json_text and len(json_text) > 200:
+                    new_articles = parse_reddit_json(json_text, source["key"], source["label"])
+                    if new_articles:
+                        print(f"[scraper] reddit: {len(new_articles)} articles from JSON API")
+                        all_articles.extend(new_articles)
+                        fetched = True
+                        break
+                    else:
+                        print(f"[scraper] reddit JSON: 0 articles from {json_url}")
 
         if not fetched:
             errors.append(source["label"])
